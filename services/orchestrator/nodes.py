@@ -487,6 +487,7 @@ class VisualNode(BaseNode):
                     scene.thumbnail_url = result.thumbnail_url
                     scene.generation_job_id = result.external_job_id
 
+                    logger.info(f"Scene {i + 1} generated: {result.video_url}")
                     state.actual_cost_usd += result.actual_cost_usd or result.estimated_cost_usd or 0
                 else:
                     # Log the actual failure reason from the result
