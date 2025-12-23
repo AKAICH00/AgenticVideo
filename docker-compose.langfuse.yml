@@ -1,0 +1,59 @@
+version: "3.9"
+
+# Langfuse - Open Source LLM Observability
+# Deploy: docker-compose -f docker-compose.langfuse.yml up -d
+
+services:
+  langfuse-db:
+    image: postgres:15-alpine
+    container_name: langfuse-db
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse123
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U langfuse" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  langfuse:
+    image: langfuse/langfuse:latest
+    container_name: langfuse
+    ports:
+      - "3100:3000" # Langfuse UI
+    environment:
+      # Database
+      DATABASE_URL: postgresql://langfuse:langfuse123@langfuse-db:5432/langfuse
+
+      # Auth secret (generate with: openssl rand -base64 32)
+      NEXTAUTH_SECRET: your-secret-change-me-in-production
+      NEXTAUTH_URL: http://localhost:3100
+
+      # Salt for hashing (generate with: openssl rand -base64 32)
+      SALT: another-secret-change-me
+
+      # Telemetry (disabled for privacy)
+      TELEMETRY_ENABLED: "false"
+
+      # Enable public sign-up for initial setup
+      AUTH_DISABLE_SIGNUP: "false"
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  langfuse-db-data:
+
+    # After deployment:
+    # 1. Access http://localhost:3100 or http://<your-server>:3100
+    # 2. Create an account (first user becomes admin)
+    # 3. Create a project and get API keys
+    # 4. Set these env vars in K8s secrets:
+    #    - LANGFUSE_SECRET_KEY
+    #    - LANGFUSE_PUBLIC_KEY
+    #    - LANGFUSE_HOST=http://langfuse:3000 (or your actual URL)

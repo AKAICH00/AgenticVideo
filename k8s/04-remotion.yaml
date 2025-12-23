@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: remotion-ssr
+  namespace: viral-video-agents
+spec:
+  replicas: 1 # Scale this for parallel rendering
+  selector:
+    matchLabels:
+      app: remotion-ssr
+  template:
+    metadata:
+      labels:
+        app: remotion-ssr
+    spec:
+      containers:
+      - name: remotion-ssr
+        image: ghcr.io/akaich00/remotion-ssr:v2.0
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 3001
+        env:
+        - name: R2_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: r2_audit_access_key
+        - name: R2_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: r2_audit_secret_key
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: url
+        - name: NEON_DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: url
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: remotion-service
+  namespace: viral-video-agents
+spec:
+  ports:
+  - port: 3001
+    targetPort: 3001
+  selector:
+    app: remotion-ssr

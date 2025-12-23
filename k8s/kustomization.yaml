@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: viral-video-agents
+
+resources:
+  - 00-namespace-secrets.yaml
+  - 01-postgres.yaml
+  - 02-nocodb.yaml
+  - 03-agents.yaml
+  - 04-remotion.yaml
+  - 05-intelligence-layer.yaml
+  - 06-orchestrator.yaml
+  - 08-publisher.yaml
+
+images:
+  - name: ghcr.io/akaich00/viral-agents
+    newTag: v2.5  # Update this when new images are pushed

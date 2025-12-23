@@ -1,0 +1,254 @@
+###############################################################################
+# Video Orchestrator V2 Deployment
+#
+# CRITICAL V2 ISOLATION ARCHITECTURE:
+# ====================================
+# This deployment uses COMPLETE STATUS-BASED ISOLATION from OLD agents:
+#
+#   OLD agents poll:  WHERE status = 'new'
+#   V2 uses:          status = 'v2_pending', 'v2_planning', etc.
+#
+# THERE IS ZERO OVERLAP - OLD agents will NEVER see V2 campaigns.
+#
+# V2 Status Flow:
+#   v2_pending → v2_planning → v2_scripting → v2_storyboarding →
+#   v2_motion → v2_visual → v2_quality → v2_composing →
+#   v2_repurposing → published/failed
+#
+# Deployment Requirements:
+# 1. Run sql/007_v2_isolation.sql BEFORE deploying
+# 2. Set V2_USE_DATABASE=true to enable database isolation
+# 3. Monitor /v2/isolation endpoint - MUST always return isolated=true
+#
+# Migration Steps (Safe Parallel Deployment):
+# 1. Deploy with PROCESSOR_MODE=old (orchestrator running but not processing)
+# 2. Verify: curl /v2/isolation returns {"isolated": true}
+# 3. Set PROCESSOR_MODE=split (premium → new, bulk → old)
+# 4. Monitor for 24-48h, check /v2/pipeline for status counts
+# 5. Set PROCESSOR_MODE=new (all traffic to new)
+# 6. Scale down old agents (k8s/03-agents.yaml) after drain
+###############################################################################
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: video-orchestrator
+  namespace: viral-video-agents
+  labels:
+    app: video-orchestrator
+    version: v2
+    component: orchestrator
+    isolation: v2-only
+    processor: new
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: video-orchestrator
+  template:
+    metadata:
+      labels:
+        app: video-orchestrator
+        version: v2
+    spec:
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+      - name: orchestrator
+        image: ghcr.io/akaich00/viral-agents:v2.4
+        command: ["python", "-m", "uvicorn", "services.orchestrator.server:app", "--host", "0.0.0.0", "--port", "8765"]
+        ports:
+        - name: http
+          containerPort: 8765
+          protocol: TCP
+        env:
+        # ============================================================
+        # V2 ISOLATION CONFIGURATION
+        # ============================================================
+        # Migration control - START WITH "old" for safety
+        - name: PROCESSOR_MODE
+          value: "old"  # Change to "split" then "new" during migration
+
+        # V2 Database Isolation - CRITICAL for status-based isolation
+        # When true, all campaigns created use status='v2_pending'
+        # which is completely isolated from OLD agents (status='new')
+        - name: V2_USE_DATABASE
+          value: "true"
+
+        # ============================================================
+        # Database
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: url
+
+        # Google AI (Gemini)
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: google_api_key
+
+        # Video Generation APIs
+        - name: KIE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: kie_api_key
+
+        # Cloudflare R2 Storage
+        - name: R2_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: r2_audit_access_key
+        - name: R2_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: r2_audit_secret_key
+
+        # ElevenLabs TTS
+        - name: ELEVENLABS_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: elevenlabs_api_key
+
+        # Lip Sync Service
+        - name: SYNC_LABS_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: sync_labs_api_key
+              optional: true
+
+        # Remotion Rendering
+        - name: REMOTION_API_URL
+          value: "https://api.cckeeper.dev"
+        - name: REMOTION_COMPOSITION_ID
+          value: "ViralShort"
+
+        # Redis for caching/queuing
+        - name: REDIS_URL
+          value: "redis://redis-service:6379"
+
+        # Langfuse observability (replaces LangSmith)
+        - name: LANGFUSE_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: langfuse_secret_key
+              optional: true
+        - name: LANGFUSE_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: langfuse_public_key
+              optional: true
+        - name: LANGFUSE_HOST
+          value: "https://langfuse.example.com"
+
+        # Logging
+        - name: LOG_LEVEL
+          value: "INFO"
+
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8765
+          initialDelaySeconds: 10
+          periodSeconds: 10
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8765
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: video-orchestrator
+  namespace: viral-video-agents
+  labels:
+    app: video-orchestrator
+spec:
+  type: ClusterIP
+  selector:
+    app: video-orchestrator
+  ports:
+  - name: http
+    port: 8765
+    targetPort: 8765
+    protocol: TCP
+
+---
+# Optional: Ingress for external access to SSE streaming
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: video-orchestrator-ingress
+  namespace: viral-video-agents
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.middlewares: default-headers@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - agents.cckeeper.dev  # UPDATE: Your production domain
+      secretName: viral-video-agents-tls
+  rules:
+    - host: agents.cckeeper.dev  # UPDATE: Your production domain
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: video-orchestrator
+                port:
+                  number: 8765
+
+---
+# HorizontalPodAutoscaler for scaling based on load
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: video-orchestrator-hpa
+  namespace: viral-video-agents
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: video-orchestrator
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80

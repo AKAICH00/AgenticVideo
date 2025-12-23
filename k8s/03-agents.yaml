@@ -1,0 +1,147 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-director
+  namespace: viral-video-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-director
+  template:
+    metadata:
+      labels:
+        app: agent-director
+    spec:
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+      - name: director
+        image: ghcr.io/akaich00/viral-agents:v2.4 # Shared image, different command
+        command: ["python", "-m", "agents.director"]
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: url
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: google_api_key
+        - name: LANGCHAIN_TRACING_V2
+          value: "true"
+        - name: LANGCHAIN_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: langsmith_api_key
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-visualist
+  namespace: viral-video-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-visualist
+  template:
+    metadata:
+      labels:
+        app: agent-visualist
+    spec:
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+      - name: visualist
+        image: ghcr.io/akaich00/viral-agents:v2.4
+        command: ["python", "-m", "agents.visualist"]
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: url
+        - name: KIE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: kie_api_key
+        - name: R2_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: r2_audit_access_key
+        - name: R2_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: r2_audit_secret_key
+        - name: LANGCHAIN_TRACING_V2
+          value: "true"
+        - name: LANGCHAIN_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: langsmith_api_key
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-renderer
+  namespace: viral-video-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-renderer
+  template:
+    metadata:
+      labels:
+        app: agent-renderer
+    spec:
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+      - name: renderer
+        image: ghcr.io/akaich00/viral-agents:v2.4
+        command: ["python", "-m", "agents.renderer"]
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: url
+        - name: REMOTION_API_URL
+          value: "http://remotion-ssr:3001"
+        - name: REMOTION_COMPOSITION_ID
+          value: "stoic-teaching"
+        # TTS
+        - name: ELEVENLABS_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: elevenlabs_api_key
+        # Lip Sync
+        - name: SYNC_LABS_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: sync_labs_api_key
+        # ComfyUI (via Tailscale)
+        - name: COMFYUI_HOST
+          value: "100.64.0.2"
+        - name: COMFYUI_PORT
+          value: "8188"
+        # LangSmith
+        - name: LANGCHAIN_TRACING_V2
+          value: "true"
+        - name: LANGCHAIN_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: langsmith_api_key
+

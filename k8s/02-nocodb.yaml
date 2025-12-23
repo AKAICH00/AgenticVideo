@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nocodb
+  namespace: viral-video-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nocodb
+  template:
+    metadata:
+      labels:
+        app: nocodb
+    spec:
+      containers:
+      - name: nocodb
+        image: nocodb/nocodb:latest
+        env:
+        - name: NC_DB
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: url
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nocodb-service
+  namespace: viral-video-agents
+spec:
+  type: LoadBalancer # Or ClusterIP if using Ingress
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: nocodb

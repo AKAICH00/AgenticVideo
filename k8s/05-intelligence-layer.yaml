@@ -1,0 +1,282 @@
+---
+# Redis for job queues and caching
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: viral-video-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        command: ["redis-server", "--appendonly", "yes"]
+        ports:
+        - containerPort: 6379
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      volumes:
+      - name: redis-data
+        persistentVolumeClaim:
+          claimName: redis-pvc
+---
+# Redis PVC for persistent storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: viral-video-agents
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: viral-video-agents
+spec:
+  ports:
+  - port: 6379
+  selector:
+    app: redis
+---
+# YouTube Intelligence Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: youtube-intelligence
+  namespace: viral-video-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: youtube-intelligence
+  template:
+    metadata:
+      labels:
+        app: youtube-intelligence
+    spec:
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+      - name: intelligence
+        image: ghcr.io/akaich00/viral-agents:v2.4
+        command: ["python", "-m", "services.youtube_intelligence"]
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: url
+        - name: REDIS_URL
+          value: "redis://redis-service:6379"
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: google_api_key
+        - name: LANGCHAIN_TRACING_V2
+          value: "true"
+        - name: LANGCHAIN_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: langsmith_api_key
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+---
+# Strategy Engine Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: strategy-engine
+  namespace: viral-video-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: strategy-engine
+  template:
+    metadata:
+      labels:
+        app: strategy-engine
+    spec:
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+      - name: strategy
+        image: ghcr.io/akaich00/viral-agents:v2.4
+        command: ["python", "-m", "services.strategy_engine"]
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: url
+        - name: REDIS_URL
+          value: "redis://redis-service:6379"
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: google_api_key
+        - name: LANGCHAIN_TRACING_V2
+          value: "true"
+        - name: LANGCHAIN_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: langsmith_api_key
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+---
+# Performance Tracker Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: performance-tracker
+  namespace: viral-video-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: performance-tracker
+  template:
+    metadata:
+      labels:
+        app: performance-tracker
+    spec:
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+      - name: tracker
+        image: ghcr.io/akaich00/viral-agents:v2.4
+        command: ["python", "-m", "services.performance_tracker"]
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: url
+        - name: REDIS_URL
+          value: "redis://redis-service:6379"
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: google_api_key
+        # YouTube Analytics API requires OAuth, not just API key
+        - name: YOUTUBE_OAUTH_CREDENTIALS
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: youtube_oauth_json
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+---
+# CronJob for periodic trend analysis
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: trend-analyzer-cron
+  namespace: viral-video-agents
+spec:
+  schedule: "0 */4 * * *"  # Every 4 hours
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: trend-analyzer
+            image: ghcr.io/your-org/viral-agents:latest
+            command:
+            - python
+            - -c
+            - |
+              from services.youtube_intelligence import TrendAnalyzer
+              import asyncio
+
+              async def run():
+                  analyzer = TrendAnalyzer()
+                  for niche in ['tech', 'finance', 'gaming', 'lifestyle']:
+                      print(f'Analyzing {niche}...')
+                      await analyzer.analyze_niche_trends(niche)
+                      print(f'{niche} complete')
+
+              asyncio.run(run())
+            env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: db-secrets
+                  key: url
+            - name: GOOGLE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: api-secrets
+                  key: google_api_key
+          restartPolicy: OnFailure
+---
+# CronJob for performance data collection
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: performance-collector-cron
+  namespace: viral-video-agents
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: collector
+            image: ghcr.io/your-org/viral-agents:latest
+            command: ["python", "-m", "services.performance_tracker.collector"]
+            env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: db-secrets
+                  key: url
+            - name: YOUTUBE_OAUTH_CREDENTIALS
+              valueFrom:
+                secretKeyRef:
+                  name: api-secrets
+                  key: youtube_oauth_json
+          restartPolicy: OnFailure

@@ -1,0 +1,291 @@
+###############################################################################
+# Video Publisher Deployment
+#
+# Handles automated video distribution to YouTube, TikTok, and other platforms:
+# - Multi-platform publishing via Blotato API
+# - Video uploads with resumable upload support
+# - SEO-optimized metadata generation
+# - Optimal posting time scheduling
+# - Thumbnail uploads
+# - Playlist management
+#
+# Requirements:
+# - Blotato API key (recommended - multi-platform)
+# - OR YouTube OAuth2 credentials (fallback - YouTube only)
+# - Google API key for Gemini (metadata generation)
+# - PostgreSQL connection for performance tracking
+#
+# The publisher runs as:
+# 1. Background worker processing publish queue
+# 2. API server for on-demand uploads
+###############################################################################
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: video-publisher
+  namespace: viral-video-agents
+  labels:
+    app: video-publisher
+    component: distribution
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: video-publisher
+  template:
+    metadata:
+      labels:
+        app: video-publisher
+    spec:
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+      - name: publisher
+        image: ghcr.io/akaich00/viral-agents:v2.4
+        command: ["python", "-m", "services.publisher.worker"]
+        ports:
+        - name: http
+          containerPort: 8766
+          protocol: TCP
+        env:
+        # ============================================================
+        # Database
+        # ============================================================
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: url
+
+        # ============================================================
+        # Blotato API (Multi-Platform Publishing)
+        # ============================================================
+        - name: BLOTATO_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: blotato-secrets
+              key: api_key
+              optional: true  # Falls back to YouTube-only if not set
+
+        # ============================================================
+        # YouTube API Credentials (Fallback when Blotato not available)
+        # ============================================================
+        - name: YOUTUBE_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: youtube-secrets
+              key: client_id
+              optional: true
+
+        - name: YOUTUBE_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: youtube-secrets
+              key: client_secret
+              optional: true
+
+        - name: YOUTUBE_REFRESH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: youtube-secrets
+              key: refresh_token
+              optional: true
+
+        # ============================================================
+        # Google AI (Gemini) for metadata generation
+        # ============================================================
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: google_api_key
+
+        # ============================================================
+        # Redis for queue management
+        # ============================================================
+        - name: REDIS_URL
+          value: "redis://redis-service:6379"
+
+        # ============================================================
+        # Publisher Configuration
+        # ============================================================
+        # Default privacy status for uploads
+        - name: DEFAULT_PRIVACY_STATUS
+          value: "private"  # Change to "public" when ready
+
+        # Target timezone for scheduling
+        - name: TARGET_TIMEZONE
+          value: "America/New_York"
+
+        # Maximum concurrent uploads
+        - name: MAX_CONCURRENT_UPLOADS
+          value: "2"
+
+        # Retry configuration
+        - name: UPLOAD_MAX_RETRIES
+          value: "3"
+        - name: UPLOAD_RETRY_DELAY
+          value: "60"  # seconds
+
+        # Logging
+        - name: LOG_LEVEL
+          value: "INFO"
+
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8766
+          initialDelaySeconds: 10
+          periodSeconds: 10
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8766
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        volumeMounts:
+        - name: upload-cache
+          mountPath: /tmp/uploads
+
+      volumes:
+      - name: upload-cache
+        emptyDir:
+          sizeLimit: 5Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: video-publisher
+  namespace: viral-video-agents
+  labels:
+    app: video-publisher
+spec:
+  type: ClusterIP
+  selector:
+    app: video-publisher
+  ports:
+  - name: http
+    port: 8766
+    targetPort: 8766
+    protocol: TCP
+
+---
+# Blotato API Secret (RECOMMENDED - multi-platform publishing)
+# Get your API key from: https://blotato.com/settings/api
+apiVersion: v1
+kind: Secret
+metadata:
+  name: blotato-secrets
+  namespace: viral-video-agents
+type: Opaque
+stringData:
+  # Blotato API key for multi-platform publishing
+  # Supports: YouTube, TikTok, LinkedIn, Pinterest, Threads, Bluesky
+  # Rate limits: 30 posts/minute, 10 media uploads/minute
+  api_key: "YOUR_BLOTATO_API_KEY"
+
+---
+# YouTube API Secrets (OPTIONAL - fallback when Blotato not available)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: youtube-secrets
+  namespace: viral-video-agents
+type: Opaque
+stringData:
+  # Get these from Google Cloud Console:
+  # 1. Create OAuth 2.0 credentials for "Desktop app"
+  # 2. Run OAuth flow to get refresh token
+  # See: https://developers.google.com/youtube/v3/guides/auth/server-side-web-apps
+  client_id: "YOUR_YOUTUBE_CLIENT_ID"
+  client_secret: "YOUR_YOUTUBE_CLIENT_SECRET"
+  refresh_token: "YOUR_YOUTUBE_REFRESH_TOKEN"
+
+---
+# CronJob for scheduled publishing
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: publisher-scheduler
+  namespace: viral-video-agents
+spec:
+  # Run every 15 minutes to check for scheduled videos
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          imagePullSecrets:
+          - name: ghcr-secret
+          containers:
+          - name: scheduler
+            image: ghcr.io/akaich00/viral-agents:v2.4
+            command: ["python", "-c", "import asyncio; from services.publisher.worker import process_scheduled; asyncio.run(process_scheduled())"]
+            env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: db-secrets
+                  key: url
+            - name: BLOTATO_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: blotato-secrets
+                  key: api_key
+                  optional: true
+            - name: YOUTUBE_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: youtube-secrets
+                  key: client_id
+                  optional: true
+            - name: YOUTUBE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: youtube-secrets
+                  key: client_secret
+                  optional: true
+            - name: YOUTUBE_REFRESH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: youtube-secrets
+                  key: refresh_token
+                  optional: true
+            - name: GOOGLE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: api-secrets
+                  key: google_api_key
+            resources:
+              requests:
+                memory: "128Mi"
+                cpu: "50m"
+              limits:
+                memory: "512Mi"
+                cpu: "200m"
+          restartPolicy: OnFailure
+
+---
+# ServiceAccount for publisher (for potential RBAC needs)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: video-publisher-sa
+  namespace: viral-video-agents
