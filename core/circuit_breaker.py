@@ -335,7 +335,7 @@ def get_video_api_breaker(provider: str) -> CircuitBreaker:
         "kie": CircuitBreakerConfig(
             failure_threshold=5,
             recovery_timeout=30.0,
-            timeout=300.0,
+            timeout=300.0,  # 5 min timeout for Kie/Kling video generation
         ),
         "wan_local": CircuitBreakerConfig(
             failure_threshold=2,  # Local failures are more serious
@@ -350,4 +350,18 @@ def get_video_api_breaker(provider: str) -> CircuitBreaker:
     }
 
     config = configs.get(provider, CircuitBreakerConfig())
-    return CircuitBreaker.get(provider) or CircuitBreaker(provider, config)
+
+    # Check if breaker already exists with correct config
+    if provider in CircuitBreaker._instances:
+        existing = CircuitBreaker._instances[provider]
+        # Update config if timeout differs (fixes issue where default 60s was used)
+        if existing.config.timeout != config.timeout:
+            logger.info(
+                f"Updating circuit breaker [{provider}] timeout: "
+                f"{existing.config.timeout}s -> {config.timeout}s"
+            )
+            existing.config = config
+        return existing
+
+    # Create new breaker with correct config
+    return CircuitBreaker(provider, config)

@@ -1,0 +1,85 @@
+###############################################################################
+# Remotion SSR Deployment for Video-Printer
+#
+# Server-side video rendering using Remotion:
+# - Headless Chrome for rendering
+# - FFmpeg for video encoding
+# - Express API for render requests
+###############################################################################
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: remotion-ssr
+  namespace: video-printer
+  labels:
+    app: remotion-ssr
+    component: rendering
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: remotion-ssr
+  template:
+    metadata:
+      labels:
+        app: remotion-ssr
+    spec:
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+      - name: remotion
+        image: ghcr.io/akaich00/video-printer-remotion:v3.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 3001
+          name: http
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3001"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+        volumeMounts:
+        - name: render-cache
+          mountPath: /tmp/renders
+      volumes:
+      - name: render-cache
+        emptyDir:
+          sizeLimit: 5Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: remotion-service
+  namespace: video-printer
+  labels:
+    app: remotion-ssr
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3001
+    targetPort: 3001
+    name: http
+  selector:
+    app: remotion-ssr

@@ -19,6 +19,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Literal, Optional
 
 from core.circuit_breaker import CircuitBreaker, CircuitBreakerOpen, get_video_api_breaker
@@ -38,15 +39,20 @@ class VideoGenerationError(Exception):
 
 class VideoModel(str, Enum):
     """Available video generation models."""
-    # Premium models (via aggregators)
-    RUNWAY_GEN4_5 = "runway-gen4.5"
-    SORA_2 = "sora-2"
-    KLING_2_5 = "kling-2.5"
+    # Premium models (via Kie.ai aggregator)
+    VEO_3_1 = "veo-3.1"              # Google Veo 3.1 - best quality, with audio
+    VEO_3_1_FAST = "veo-3.1-fast"    # Google Veo 3.1 Fast - faster, cheaper
+    RUNWAY_ALEPH = "runway-aleph"    # Runway Aleph - advanced scene reasoning
+    SORA_2 = "sora-2"                # OpenAI Sora 2 - realistic motion
+    KLING_2_5 = "kling-2.5"          # Kling 2.5 - Chinese model (may render Chinese text)
     LUMA_DREAM = "luma-dream-machine"
 
-    # Bulk models (self-hosted)
-    WAN_2_1 = "wan-2.1"
-    WAN_T2V_1_3B = "wan-t2v-1.3b"  # Smaller, fits 8GB GPU
+    # Legacy aliases (mapped to newer models)
+    RUNWAY_GEN4_5 = "runway-gen4.5"  # Maps to Runway Aleph
+
+    # Bulk models (via Kie.ai or self-hosted)
+    WAN_2_1 = "wan-2.1"              # Wan 2.1 - good balance of quality/cost
+    WAN_T2V_1_3B = "wan-t2v-1.3b"    # Smaller, fits 8GB GPU
 
 
 class GenerationStatus(str, Enum):
@@ -88,6 +94,7 @@ class VideoResult:
     status: GenerationStatus
     video_url: Optional[str] = None
     thumbnail_url: Optional[str] = None
+    local_path: Optional[str] = None  # Local path after download
 
     # Provider details
     provider: Optional[str] = None
@@ -110,13 +117,17 @@ class VideoResult:
 
 
 # Cost estimation per model (USD per second of video)
+# Based on Kie.ai pricing: https://kie.ai/v3-api-pricing
 MODEL_COSTS = {
-    VideoModel.RUNWAY_GEN4_5: 0.15,
-    VideoModel.SORA_2: 0.20,
-    VideoModel.KLING_2_5: 0.10,
-    VideoModel.LUMA_DREAM: 0.08,
-    VideoModel.WAN_2_1: 0.003,  # GPU time only
-    VideoModel.WAN_T2V_1_3B: 0.002,
+    VideoModel.VEO_3_1: 0.25,         # $2/8s = $0.25/s (highest quality)
+    VideoModel.VEO_3_1_FAST: 0.05,    # $0.40/8s = $0.05/s (faster, cheaper)
+    VideoModel.RUNWAY_ALEPH: 0.15,    # Runway Aleph
+    VideoModel.RUNWAY_GEN4_5: 0.15,   # Legacy alias
+    VideoModel.SORA_2: 0.20,          # Sora 2
+    VideoModel.KLING_2_5: 0.10,       # Kling (Chinese model)
+    VideoModel.LUMA_DREAM: 0.08,      # Luma Dream Machine
+    VideoModel.WAN_2_1: 0.02,         # Wan via Kie.ai
+    VideoModel.WAN_T2V_1_3B: 0.002,   # Self-hosted GPU time only
 }
 
 
@@ -182,6 +193,59 @@ class VideoGenerationClient:
         if self._http_client:
             await self._http_client.aclose()
             self._http_client = None
+
+    async def download_video(
+        self,
+        video_url: str,
+        output_dir: str = "output",
+        filename: Optional[str] = None,
+        campaign_id: Optional[str] = None,
+        scene_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Download a video from a temporary URL to local storage.
+
+        Args:
+            video_url: The temporary video URL to download
+            output_dir: Base output directory (default: "output")
+            filename: Custom filename (auto-generated if not provided)
+            campaign_id: Campaign ID for organizing files
+            scene_id: Scene ID for filename
+
+        Returns:
+            Local path to the downloaded file, or None if failed
+        """
+        try:
+            # Create output directory structure
+            base_dir = Path(output_dir)
+            if campaign_id:
+                base_dir = base_dir / campaign_id
+            base_dir.mkdir(parents=True, exist_ok=True)
+
+            # Generate filename
+            if not filename:
+                if scene_id:
+                    filename = f"scene_{scene_id}.mp4"
+                else:
+                    filename = f"video_{uuid.uuid4().hex[:8]}.mp4"
+
+            output_path = base_dir / filename
+
+            # Download the video
+            client = await self._get_client()
+            response = await client.get(video_url, follow_redirects=True)
+            response.raise_for_status()
+
+            # Write to file
+            with open(output_path, "wb") as f:
+                f.write(response.content)
+
+            logger.info(f"Video downloaded: {output_path} ({len(response.content) / 1024 / 1024:.1f} MB)")
+            return str(output_path)
+
+        except Exception as e:
+            logger.error(f"Failed to download video from {video_url}: {e}")
+            return None
 
     def _emit_progress(self, request_id: str, percent: int, message: str):
         """Emit progress update via callback."""
@@ -337,15 +401,24 @@ class VideoGenerationClient:
 
         self._emit_progress(request.request_id, 10, "Submitting to Kie AI")
 
-        # Map our model names to Kie Market API model names (full path format)
+        # Map our model names to Kie Market API model names
+        # See: https://kie.ai/market for available models
+        # NOTE: Default to Veo 3.1 Fast or Wan to avoid Chinese text from Kling
         kie_model_map = {
-            VideoModel.RUNWAY_GEN4_5: "kling-2.6/text-to-video",  # Runway not available, use Kling
-            VideoModel.SORA_2: "sora2/text-to-video",
-            VideoModel.KLING_2_5: "kling-2.6/text-to-video",
-            VideoModel.LUMA_DREAM: "hailuo-i2v/text-to-video",  # Luma not available, use Hailuo
+            # Premium models
+            VideoModel.VEO_3_1: "veo3/text-to-video",            # Google Veo 3.1 - best quality
+            VideoModel.VEO_3_1_FAST: "veo3-fast/text-to-video",  # Google Veo 3.1 Fast
+            VideoModel.RUNWAY_ALEPH: "runway-aleph/text-to-video",  # Runway Aleph
+            VideoModel.RUNWAY_GEN4_5: "runway-aleph/text-to-video",  # Legacy alias → Runway Aleph
+            VideoModel.SORA_2: "sora2/text-to-video",            # OpenAI Sora 2
+            VideoModel.KLING_2_5: "kling-2.6/text-to-video",     # Kling (Chinese - use with caution)
+            VideoModel.LUMA_DREAM: "hailuo-i2v/text-to-video",   # Hailuo as Luma alternative
+            # Bulk/cost-effective models
+            VideoModel.WAN_2_1: "wan-2.6/text-to-video",         # Wan 2.6 (non-Chinese)
         }
 
-        kie_model = kie_model_map.get(request.model, "kling-2.6/text-to-video")
+        # Default to Veo 3.1 Fast for best quality/cost ratio without Chinese text
+        kie_model = kie_model_map.get(request.model, "veo3-fast/text-to-video")
 
         # Kie API only accepts duration of "5" or "10" seconds
         # Clamp to nearest valid value

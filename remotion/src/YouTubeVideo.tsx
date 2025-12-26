@@ -51,7 +51,7 @@ const LowerThird: React.FC<{ title: string }> = ({ title }) => {
             position: 'absolute',
             bottom: 80,
             left: 0,
-            transform: \`translateX(\${interpolate(slideIn, [0, 1], [-400, 0])}px)\`,
+            transform: `translateX(${interpolate(slideIn, [0, 1], [-400, 0])}px)`,
         }}>
             <div style={{
                 backgroundColor: 'rgba(0, 0, 0, 0.85)',
@@ -107,7 +107,7 @@ const IntroSequence: React.FC<{ title: string }> = ({ title }) => {
                 fontFamily: 'Helvetica, Arial, sans-serif',
                 fontWeight: 'bold',
                 textAlign: 'center',
-                transform: \`scale(\${scale})\`,
+                transform: `scale(${scale})`,
                 maxWidth: '80%',
             }}>
                 {title}

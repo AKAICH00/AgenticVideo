@@ -68,21 +68,23 @@ class GPUConfig:
 class ModelConfig:
     """Model selection configuration."""
 
-    # Video generation models available through aggregators
+    # Video generation models available through Kie.ai aggregator
+    # See: https://kie.ai/market
     premium_models: list[str] = field(default_factory=lambda: [
-        "runway-gen4.5",
-        "sora-2",
-        "kling-2.5",
-        "luma-dream-machine",
+        "veo-3.1",          # Google Veo 3.1 - best quality with audio
+        "veo-3.1-fast",     # Google Veo 3.1 Fast - faster, cheaper
+        "runway-aleph",     # Runway Aleph - advanced scene reasoning
+        "sora-2",           # OpenAI Sora 2 - realistic motion
+        "kling-2.5",        # Kling 2.5 - WARNING: renders Chinese text
     ])
 
     bulk_models: list[str] = field(default_factory=lambda: [
-        "wan-2.1",
-        "wan-t2v-1.3b",  # Smaller model for 8GB GPUs
+        "wan-2.1",          # Wan 2.1 - good balance
+        "wan-t2v-1.3b",     # Smaller model for 8GB GPUs
     ])
 
-    # Default model per tier
-    default_premium: str = "runway-gen4.5"
+    # Default model per tier (avoid Kling to prevent Chinese text)
+    default_premium: str = "veo-3.1-fast"
     default_bulk: str = "wan-2.1"
 
     # LLM models

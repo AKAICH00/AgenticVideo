@@ -1,0 +1,147 @@
+###############################################################################
+# Video Publisher Deployment
+#
+# Handles multi-platform video distribution via Blotato API:
+# - YouTube, TikTok, LinkedIn, Pinterest, Threads, Bluesky
+# - Scheduled publishing
+# - SEO-optimized metadata generation
+###############################################################################
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: video-publisher
+  namespace: video-printer
+  labels:
+    app: video-publisher
+    component: distribution
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: video-publisher
+  template:
+    metadata:
+      labels:
+        app: video-publisher
+    spec:
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+      - name: publisher
+        image: ghcr.io/akaich00/video-printer-agents:v3.0
+        imagePullPolicy: Always
+        command: ["python", "-m", "services.publisher.worker"]
+        ports:
+        - containerPort: 8766
+          name: http
+        env:
+        # Database
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: url
+        # Blotato API (Multi-Platform Publishing)
+        - name: BLOTATO_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: blotato-secrets
+              key: api_key
+        # Google AI for metadata generation
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: google_api_key
+        # Redis for queue management
+        - name: REDIS_URL
+          value: "redis://redis-service:6379"
+        # Publisher config
+        - name: DEFAULT_PRIVACY_STATUS
+          value: "private"
+        - name: TARGET_TIMEZONE
+          value: "America/New_York"
+        - name: MAX_CONCURRENT_UPLOADS
+          value: "2"
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        # Note: No health probes - this is a background worker
+        volumeMounts:
+        - name: upload-cache
+          mountPath: /tmp/uploads
+      volumes:
+      - name: upload-cache
+        emptyDir:
+          sizeLimit: 5Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: video-publisher
+  namespace: video-printer
+  labels:
+    app: video-publisher
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8766
+    targetPort: 8766
+    name: http
+  selector:
+    app: video-publisher
+
+---
+# CronJob for scheduled publishing checks
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: publisher-scheduler
+  namespace: video-printer
+spec:
+  schedule: "*/15 * * * *"  # Every 15 minutes
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          imagePullSecrets:
+          - name: ghcr-secret
+          containers:
+          - name: scheduler
+            image: ghcr.io/akaich00/video-printer-agents:v3.0
+            command: ["python", "-c", "import asyncio; from services.publisher.worker import process_scheduled; asyncio.run(process_scheduled())"]
+            env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: db-secrets
+                  key: url
+            - name: BLOTATO_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: blotato-secrets
+                  key: api_key
+            - name: GOOGLE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: api-secrets
+                  key: google_api_key
+            resources:
+              requests:
+                memory: "128Mi"
+                cpu: "50m"
+              limits:
+                memory: "512Mi"
+                cpu: "200m"
+          restartPolicy: OnFailure

@@ -301,7 +301,7 @@ Create scenes as JSON array. Each scene should be 3-10 seconds:
     {{
         "scene_number": 1,
         "description": "Brief description of what happens",
-        "visual_prompt": "Detailed prompt for AI video generation",
+        "visual_prompt": "Detailed prompt for AI video generation - PURELY VISUAL, NO TEXT",
         "duration_seconds": 5,
         "camera_motion": "static|pan_left|pan_right|zoom_in|zoom_out|track",
         "transition_in": "cut|fade|dissolve|wipe",
@@ -309,6 +309,17 @@ Create scenes as JSON array. Each scene should be 3-10 seconds:
         "audio_cue": "What audio/music note for this scene"
     }}
 ]
+
+CRITICAL VISUAL PROMPT RULES:
+1. NEVER include text, words, logos, titles, captions, or any written content in visual_prompt
+2. Describe ONLY what is visually happening - people, objects, scenery, lighting, camera angles
+3. Text overlays, CTAs, and titles will be added in post-production via Remotion
+4. End each visual_prompt with: "no text, no words, no writing, no logos, no titles"
+5. Use prompt structure: Scene Setting + Subject + Motion + Style
+
+GOOD: "Person meditating on beach at sunrise, calm ocean waves, soft golden light, drone shot slowly circling, cinematic 4k, no text, no words, no writing, no logos, no titles"
+BAD: "Title card: 3 Morning Tips" (NEVER DO THIS)
+BAD: "End screen with subscribe button" (NEVER DO THIS)
 
 Aim for 6-12 scenes total. Be specific in visual_prompt - it goes directly to video AI."""
 
@@ -455,8 +466,10 @@ class VisualNode(BaseNode):
         total_scenes = len(scenes)
 
         # Select model based on quality tier
+        # Premium: Use Veo 3.1 Fast for best quality without Chinese text issues
+        # Bulk: Use Wan 2.1 (also no Chinese text issues)
         model = (
-            VideoModel.RUNWAY_GEN4_5
+            VideoModel.VEO_3_1_FAST
             if state.quality_tier == "premium"
             else VideoModel.WAN_2_1
         )
@@ -472,11 +485,15 @@ class VisualNode(BaseNode):
             )
 
             try:
+                # Default negative prompt to avoid text/watermarks in generated videos
+                default_negative_prompt = "text, words, letters, titles, captions, logos, watermarks, writing, subtitles, credits"
+
                 result = await self.video_client.generate(
                     prompt=scene.visual_prompt,
                     model=model,
                     duration_seconds=int(scene.duration_seconds),
                     quality_tier=state.quality_tier,
+                    negative_prompt=default_negative_prompt,
                     scene_id=scene.scene_id,
                     campaign_id=state.campaign_id,
                 )
@@ -488,6 +505,18 @@ class VisualNode(BaseNode):
                     scene.generation_job_id = result.external_job_id
 
                     logger.info(f"Scene {i + 1} generated: {result.video_url}")
+
+                    # Auto-download video to prevent temp URL expiration
+                    local_path = await self.video_client.download_video(
+                        video_url=result.video_url,
+                        output_dir="output",
+                        campaign_id=state.campaign_id,
+                        scene_id=scene.scene_id,
+                    )
+                    if local_path:
+                        scene.local_path = local_path
+                        logger.info(f"Scene {i + 1} saved to: {local_path}")
+
                     state.actual_cost_usd += result.actual_cost_usd or result.estimated_cost_usd or 0
                 else:
                     # Log the actual failure reason from the result

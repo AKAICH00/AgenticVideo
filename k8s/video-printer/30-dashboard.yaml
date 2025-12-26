@@ -1,0 +1,398 @@
+###############################################################################
+# Dashboard Deployment
+#
+# Serves the AgenticVideo Dashboard UI:
+# - Static HTML/JS dashboard
+# - Connects to orchestrator for SSE streaming
+###############################################################################
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-html
+  namespace: video-printer
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>AgenticVideo - Video Generation Dashboard</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <script>
+            tailwind.config = {
+                darkMode: 'class',
+                theme: {
+                    extend: {
+                        colors: {
+                            'brand': {
+                                50: '#f0f9ff',
+                                100: '#e0f2fe',
+                                500: '#0ea5e9',
+                                600: '#0284c7',
+                                700: '#0369a1',
+                            }
+                        }
+                    }
+                }
+            }
+        </script>
+        <style>
+            @keyframes pulse-border {
+                0%, 100% { border-color: rgba(14, 165, 233, 0.5); }
+                50% { border-color: rgba(14, 165, 233, 1); }
+            }
+            .pulse-border { animation: pulse-border 2s ease-in-out infinite; }
+            @keyframes slide-in {
+                from { opacity: 0; transform: translateY(-10px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+            .slide-in { animation: slide-in 0.3s ease-out; }
+        </style>
+    </head>
+    <body class="bg-slate-900 text-slate-100 min-h-screen">
+        <header class="border-b border-slate-700 bg-slate-800/50 backdrop-blur sticky top-0 z-50">
+            <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-brand-500 to-purple-600 flex items-center justify-center">
+                        <svg class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-bold">AgenticVideo</h1>
+                        <p class="text-xs text-slate-400">AI Video Generation Pipeline</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-4">
+                    <a href="/nocodb/" class="text-sm text-slate-400 hover:text-brand-400">📊 NocoDB</a>
+                    <div id="serverStatus" class="flex items-center gap-2 text-sm">
+                        <span class="w-2 h-2 rounded-full bg-yellow-500"></span>
+                        <span class="text-slate-400">Connecting...</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <main class="max-w-7xl mx-auto px-4 py-8">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <!-- Left Panel: Generation Form -->
+                <div class="lg:col-span-1">
+                    <div class="bg-slate-800 rounded-xl border border-slate-700 p-6">
+                        <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                            <svg class="w-5 h-5 text-brand-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                            </svg>
+                            Generate Video
+                        </h2>
+                        <form id="generateForm" class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-1">Topic *</label>
+                                <textarea id="topic" name="topic" rows="3" required placeholder="e.g., 10 AI Tools Every Developer Needs in 2025" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 placeholder-slate-500"></textarea>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-1">Niche</label>
+                                <select id="niche" name="niche" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-brand-500">
+                                    <option value="stoic">Stoic Philosophy</option>
+                                    <option value="tech">Technology</option>
+                                    <option value="finance">Finance</option>
+                                    <option value="gaming">Gaming</option>
+                                    <option value="lifestyle">Lifestyle</option>
+                                    <option value="education">Education</option>
+                                    <option value="entertainment">Entertainment</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-1">Quality</label>
+                                <div class="grid grid-cols-3 gap-2">
+                                    <label class="flex flex-col items-center p-3 bg-slate-900 border border-slate-600 rounded-lg cursor-pointer hover:border-brand-500">
+                                        <input type="radio" name="priority" value="cost" class="text-brand-500">
+                                        <span class="text-xs mt-1">Fast</span>
+                                    </label>
+                                    <label class="flex flex-col items-center p-3 bg-slate-900 border border-slate-600 rounded-lg cursor-pointer hover:border-brand-500">
+                                        <input type="radio" name="priority" value="balanced" checked class="text-brand-500">
+                                        <span class="text-xs mt-1">Balanced</span>
+                                    </label>
+                                    <label class="flex flex-col items-center p-3 bg-slate-900 border border-slate-600 rounded-lg cursor-pointer hover:border-brand-500">
+                                        <input type="radio" name="priority" value="quality" class="text-brand-500">
+                                        <span class="text-xs mt-1">Premium</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <button type="submit" id="submitBtn" class="w-full bg-gradient-to-r from-brand-500 to-brand-600 hover:from-brand-600 hover:to-brand-700 text-white font-medium py-3 px-4 rounded-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+                                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                                </svg>
+                                <span id="submitBtnText">Generate Video</span>
+                            </button>
+                        </form>
+                    </div>
+                    <!-- Campaigns List -->
+                    <div class="bg-slate-800 rounded-xl border border-slate-700 p-4 mt-4">
+                        <h3 class="text-sm font-semibold mb-3">Recent Campaigns</h3>
+                        <div id="campaignsList" class="space-y-2 text-sm text-slate-400">Loading...</div>
+                    </div>
+                </div>
+
+                <!-- Right Panel: Progress & Events -->
+                <div class="lg:col-span-2 space-y-6">
+                    <div id="progressCard" class="bg-slate-800 rounded-xl border border-slate-700 p-6 hidden">
+                        <div class="flex items-center justify-between mb-4">
+                            <h2 class="text-lg font-semibold flex items-center gap-2">
+                                <svg class="w-5 h-5 text-brand-500 animate-spin" id="progressSpinner" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                                </svg>
+                                <span id="progressTitle">Generation Progress</span>
+                            </h2>
+                            <span id="campaignId" class="text-xs text-slate-500 font-mono"></span>
+                        </div>
+                        <div class="mb-6">
+                            <div class="flex items-center justify-between text-sm mb-2">
+                                <span class="text-slate-400">Overall Progress</span>
+                                <span id="progressPercent" class="font-mono text-brand-400">0%</span>
+                            </div>
+                            <div class="h-3 bg-slate-900 rounded-full overflow-hidden">
+                                <div id="progressBar" class="h-full bg-gradient-to-r from-brand-500 to-purple-500 transition-all duration-500" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div id="currentStatus" class="bg-slate-900 rounded-lg p-4 border border-slate-700">
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="text-sm text-slate-400">Current Step:</span>
+                                <span id="currentStep" class="text-sm font-medium">Waiting...</span>
+                            </div>
+                            <p id="statusMessage" class="text-slate-300"></p>
+                        </div>
+                    </div>
+                    <div class="bg-slate-800 rounded-xl border border-slate-700 p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <h2 class="text-lg font-semibold">Event Log</h2>
+                            <button onclick="clearEvents()" class="text-xs text-slate-500 hover:text-slate-300">Clear</button>
+                        </div>
+                        <div id="eventsLog" class="space-y-2 max-h-96 overflow-y-auto">
+                            <div class="text-sm text-slate-500 text-center py-8">No events yet</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <script>
+            const API_BASE = window.location.protocol + '//' + window.location.host + '/api';
+            let eventSource = null;
+
+            document.addEventListener('DOMContentLoaded', () => {
+                checkHealth();
+                loadCampaigns();
+                document.getElementById('generateForm').addEventListener('submit', handleSubmit);
+            });
+
+            async function checkHealth() {
+                const el = document.getElementById('serverStatus');
+                try {
+                    const r = await fetch(API_BASE + '/health');
+                    const d = await r.json();
+                    el.innerHTML = '<span class="w-2 h-2 rounded-full bg-green-500"></span><span class="text-green-400">Connected</span>';
+                } catch(e) {
+                    el.innerHTML = '<span class="w-2 h-2 rounded-full bg-red-500"></span><span class="text-red-400">Offline</span>';
+                }
+            }
+
+            async function loadCampaigns() {
+                try {
+                    const r = await fetch(API_BASE + '/campaigns');
+                    const d = await r.json();
+                    const list = document.getElementById('campaignsList');
+                    if (d.campaigns?.length) {
+                        list.innerHTML = d.campaigns.slice(0,5).map(c =>
+                            `<div class="p-2 bg-slate-900 rounded flex justify-between items-center">
+                                <span class="truncate">${c.title || c.topic}</span>
+                                <span class="text-xs px-2 py-1 rounded ${c.status === 'completed' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}">${c.status}</span>
+                            </div>`
+                        ).join('');
+                    } else {
+                        list.innerHTML = '<div class="text-center">No campaigns yet</div>';
+                    }
+                } catch(e) {
+                    document.getElementById('campaignsList').innerHTML = '<div class="text-center text-red-400">Failed to load</div>';
+                }
+            }
+
+            async function handleSubmit(e) {
+                e.preventDefault();
+                const btn = document.getElementById('submitBtn');
+                const btnText = document.getElementById('submitBtnText');
+                btn.disabled = true;
+                btnText.textContent = 'Starting...';
+
+                const formData = new FormData(e.target);
+                const payload = {
+                    topic: formData.get('topic'),
+                    niche: formData.get('niche'),
+                    priority: formData.get('priority'),
+                };
+
+                try {
+                    const r = await fetch(API_BASE + '/generate', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(payload),
+                    });
+                    const d = await r.json();
+                    document.getElementById('progressCard').classList.remove('hidden');
+                    document.getElementById('campaignId').textContent = 'ID: ' + d.campaign_id;
+                    connectStream(d.campaign_id);
+                    addEvent({type: 'started', message: 'Generation started'});
+                    btnText.textContent = 'Generating...';
+                    loadCampaigns();
+                } catch(err) {
+                    addEvent({type: 'error', message: err.message});
+                    btn.disabled = false;
+                    btnText.textContent = 'Generate Video';
+                }
+            }
+
+            function connectStream(id) {
+                if (eventSource) eventSource.close();
+                eventSource = new EventSource(API_BASE + '/stream/' + id);
+                eventSource.onmessage = (e) => {
+                    try {
+                        const d = JSON.parse(e.data);
+                        handleEvent(d);
+                    } catch(err) {}
+                };
+            }
+
+            function handleEvent(d) {
+                if (d.progress_percent !== undefined) {
+                    document.getElementById('progressBar').style.width = d.progress_percent + '%';
+                    document.getElementById('progressPercent').textContent = Math.round(d.progress_percent) + '%';
+                }
+                if (d.current_step) document.getElementById('currentStep').textContent = d.current_step;
+                if (d.message) document.getElementById('statusMessage').textContent = d.message;
+                addEvent(d);
+                if (d.type === 'completed' || d.type === 'failed') {
+                    document.getElementById('submitBtn').disabled = false;
+                    document.getElementById('submitBtnText').textContent = 'Generate Another';
+                    document.getElementById('progressSpinner').classList.remove('animate-spin');
+                    loadCampaigns();
+                }
+            }
+
+            function addEvent(d) {
+                const log = document.getElementById('eventsLog');
+                const placeholder = log.querySelector('.text-center');
+                if (placeholder) placeholder.remove();
+                const icons = {started:'🚀',completed:'✅',failed:'❌',progress:'⏳',error:'🔴',info:'ℹ️'};
+                const el = document.createElement('div');
+                el.className = 'slide-in flex items-start gap-3 p-3 bg-slate-900 rounded-lg border border-slate-700/50';
+                el.innerHTML = `<span>${icons[d.type]||'•'}</span><div class="flex-1"><span class="text-xs text-slate-500">${d.type||'info'}</span><p class="text-sm text-slate-300">${d.message||''}</p></div>`;
+                log.insertBefore(el, log.firstChild);
+                while (log.children.length > 50) log.removeChild(log.lastChild);
+            }
+
+            function clearEvents() {
+                document.getElementById('eventsLog').innerHTML = '<div class="text-sm text-slate-500 text-center py-8">No events yet</div>';
+            }
+
+            setInterval(checkHealth, 10000);
+        </script>
+    </body>
+    </html>
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard
+  namespace: video-printer
+  labels:
+    app: dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dashboard
+  template:
+    metadata:
+      labels:
+        app: dashboard
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: html
+          mountPath: /usr/share/nginx/html
+        - name: nginx-conf
+          mountPath: /etc/nginx/conf.d
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "10m"
+          limits:
+            memory: "64Mi"
+            cpu: "50m"
+      volumes:
+      - name: html
+        configMap:
+          name: dashboard-html
+      - name: nginx-conf
+        configMap:
+          name: nginx-config
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: video-printer
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+            try_files $uri $uri/ /index.html;
+        }
+
+        # Proxy to orchestrator API
+        location /api/ {
+            proxy_pass http://orchestrator-service:8765/;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_buffering off;
+            proxy_cache off;
+        }
+
+        # Proxy to NocoDB
+        location /nocodb/ {
+            proxy_pass http://nocodb-service:8080/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+        }
+    }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard-service
+  namespace: video-printer
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    targetPort: 80
+    nodePort: 30088
+  selector:
+    app: dashboard

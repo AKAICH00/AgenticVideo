@@ -1,0 +1,161 @@
+###############################################################################
+# AI Agents Deployments for Video-Printer
+#
+# Three specialized agents working together:
+# - Director: Orchestrates campaign workflows
+# - Visualist: Generates visual assets using Kie.ai
+# - Renderer: Coordinates video rendering with Remotion
+###############################################################################
+
+# Agent Director
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-director
+  namespace: video-printer
+  labels:
+    app: agent-director
+    component: agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-director
+  template:
+    metadata:
+      labels:
+        app: agent-director
+    spec:
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+      - name: director
+        image: ghcr.io/akaich00/video-printer-agents:v3.0
+        command: ["python", "-m", "agents.director"]
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: url
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: google_api_key
+        - name: REDIS_URL
+          value: "redis://redis-service:6379"
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+
+---
+# Agent Visualist
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-visualist
+  namespace: video-printer
+  labels:
+    app: agent-visualist
+    component: agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-visualist
+  template:
+    metadata:
+      labels:
+        app: agent-visualist
+    spec:
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+      - name: visualist
+        image: ghcr.io/akaich00/video-printer-agents:v3.0
+        command: ["python", "-m", "agents.visualist"]
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: url
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: google_api_key
+        - name: KIE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: kie_api_key
+        - name: REDIS_URL
+          value: "redis://redis-service:6379"
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+
+---
+# Agent Renderer
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-renderer
+  namespace: video-printer
+  labels:
+    app: agent-renderer
+    component: agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-renderer
+  template:
+    metadata:
+      labels:
+        app: agent-renderer
+    spec:
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+      - name: renderer
+        image: ghcr.io/akaich00/video-printer-agents:v3.0
+        command: ["python", "-m", "agents.renderer"]
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: url
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: google_api_key
+        - name: REMOTION_URL
+          value: "http://remotion-service:3001"
+        - name: REDIS_URL
+          value: "redis://redis-service:6379"
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"

@@ -1,0 +1,48 @@
+###############################################################################
+# Ingress Configuration for Video-Printer UI
+#
+# Routes:
+# - agents.cckeeper.dev/ -> Dashboard
+# - agents.cckeeper.dev/nocodb -> NocoDB
+# - agents.cckeeper.dev/api -> Orchestrator API
+###############################################################################
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: video-printer-ingress
+  namespace: video-printer
+  annotations:
+    kubernetes.io/ingress.class: traefik
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+spec:
+  rules:
+  # Dashboard UI
+  - host: video.46.62.253.219.nip.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: dashboard-service
+            port:
+              number: 80
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: orchestrator-service
+            port:
+              number: 8765
+  # NocoDB on separate subdomain
+  - host: db.46.62.253.219.nip.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: nocodb-service
+            port:
+              number: 8080

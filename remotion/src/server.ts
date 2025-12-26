@@ -106,6 +106,11 @@ app.get('/download/:filename', (req, res) => {
     }
 });
 
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // Status check (for async polling support later)
 app.get('/render/:renderId/status', (req, res) => {
     // Implementing state persistence is out of scope for MVP

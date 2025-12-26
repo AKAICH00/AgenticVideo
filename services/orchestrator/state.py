@@ -112,6 +112,7 @@ class Scene:
     # Generation state
     status: str = "pending"
     video_url: Optional[str] = None
+    local_path: Optional[str] = None  # Local file path after download
     thumbnail_url: Optional[str] = None
     generation_job_id: Optional[str] = None
     retry_count: int = 0

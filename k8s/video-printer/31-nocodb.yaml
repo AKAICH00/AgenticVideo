@@ -1,0 +1,92 @@
+###############################################################################
+# NocoDB Deployment
+#
+# Low-code database UI for managing video campaigns:
+# - View/edit campaigns, scripts, scenes, assets
+# - Create new campaigns directly
+# - Monitor generation status
+###############################################################################
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nocodb
+  namespace: video-printer
+  labels:
+    app: nocodb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nocodb
+  template:
+    metadata:
+      labels:
+        app: nocodb
+    spec:
+      containers:
+      - name: nocodb
+        image: nocodb/nocodb:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        env:
+        # NocoDB requires postgres:// format (not postgresql://)
+        - name: NC_DB
+          value: "pg://postgres-service:5432?u=postgres&p=videoprinter2024&d=video_printer"
+        - name: NC_AUTH_JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: nocodb-secrets
+              key: jwt_secret
+        - name: NC_DISABLE_TELEMETRY
+          value: "true"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        readinessProbe:
+          httpGet:
+            path: /api/v1/health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /api/v1/health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        volumeMounts:
+        - name: nocodb-data
+          mountPath: /usr/app/data
+      volumes:
+      - name: nocodb-data
+        emptyDir: {}
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nocodb-secrets
+  namespace: video-printer
+type: Opaque
+stringData:
+  jwt_secret: "agentic-video-nocodb-secret-key-2024"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nocodb-service
+  namespace: video-printer
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+  selector:
+    app: nocodb

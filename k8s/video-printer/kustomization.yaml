@@ -1,0 +1,24 @@
+###############################################################################
+# Kustomization for Video-Printer
+#
+# Apply all resources: kubectl apply -k k8s/video-printer/
+###############################################################################
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: video-printer
+
+resources:
+  - 00-namespace.yaml
+  - 01-secrets.yaml
+  - 10-postgres.yaml
+  - 11-redis.yaml
+  - 20-agents.yaml
+  - 21-remotion.yaml
+  - 22-orchestrator.yaml
+  - 23-publisher.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: video-printer
+  app.kubernetes.io/managed-by: kustomize

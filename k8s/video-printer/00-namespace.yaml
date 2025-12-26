@@ -1,0 +1,10 @@
+###############################################################################
+# Video-Printer Namespace
+###############################################################################
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: video-printer
+  labels:
+    app.kubernetes.io/name: video-printer
+    app.kubernetes.io/component: platform
